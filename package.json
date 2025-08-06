@@ -1,0 +1,15 @@
+{
+  "name": "luna-bot",
+  "version": "1.0.0",
+  "description": "A Telegram bot for period and cycle tracking.",
+  "main": "src/bot.js",
+  "scripts": {
+    "start": "node src/bot.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.0.3",
+    "node-telegram-bot-api": "^0.66.0",
+    "shamsi-date-converter": "^1.0.5",
+    "sqlite3": "^5.1.6"
+  }
+}

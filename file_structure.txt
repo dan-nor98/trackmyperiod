@@ -1,0 +1,13 @@
+track-my-period-bot/
+├── src/
+│   ├── bot.js              # Main file to run the bot
+│   ├── handlers/
+│   │   ├── user_handler.js   # Handles user-related commands (start, help, etc.)
+│   │   └── cycle_handler.js  # Handles cycle tracking commands
+│   ├── utils/
+│   │   └── calendar.js       # Calendar conversion utility
+│   └── services/
+│       └── database.js       # Database connection and queries
+├── .env                    # Environment variables (API keys, etc.)
+├── package.json            # Project dependencies
+└── README.md               # Project documentation
