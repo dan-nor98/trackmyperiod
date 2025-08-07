@@ -6,6 +6,39 @@ const { t } = require('../utils/locales.js');
 // --- Database Helpers (Async/Await) ---
 const dbGet = (sql, params = []) => new Promise((resolve, reject) => db.get(sql, params, (err, row) => err ? reject(err) : resolve(row)));
 const dbRun = (sql, params = []) => new Promise((resolve, reject) => db.run(sql, params, function(err) { err ? reject(err) : resolve(this) }));
+const dbQuery = (sql, params = []) => new Promise((resolve, reject) => db.all(sql, params, (err, rows) => err ? reject(err) : resolve(rows)));
+
+async function setCommandsForUser(bot, chatId, lang, role) {
+    const baseCommands = [
+        { command: 'settings', description: t('command_settings', lang) },
+        { command: 'help', description: t('command_help', lang) },
+    ];
+
+    let roleCommands = [];
+    if (role === 'primary') {
+        roleCommands = [
+            { command: 'track', description: t('command_track', lang) },
+            { command: 'symptoms', description: t('command_symptoms', lang) },
+            { command: 'history', description: t('command_history', lang) },
+            { command: 'partner', description: t('command_partner', lang) },
+            { command: 'reminders', description: t('command_reminders', lang) },
+        ];
+    } else if (role === 'partner') {
+        roleCommands = [
+            { command: 'status', description: t('command_status', lang) },
+            { command: 'share', description: t('command_share', lang) },
+        ];
+    }
+
+    const allCommands = [...roleCommands, ...baseCommands];
+
+    try {
+        await bot.setMyCommands(allCommands, { scope: { type: 'chat', chat_id: chatId } });
+    } catch (error) {
+        console.error(`Failed to set commands for chat ${chatId}:`, error.message);
+    }
+}
+
 
 async function handleHelpCommand(bot, msg) {
     const chatId = msg.chat.id;
@@ -18,8 +51,6 @@ async function handleHelpCommand(bot, msg) {
         helpText += t('helpPrimary', lang);
     } else if (user && user.role === 'partner') {
         helpText += t('helpPartner', lang);
-    } else {
-        helpText += t('helpUnassigned', lang);
     }
     
     helpText += t('helpFooter', lang);
@@ -40,8 +71,9 @@ function handleStart(bot, msg, match) {
         if (err) return console.error("DB Error (find user):", err.message);
 
         if (!row) {
-            db.run(`INSERT INTO users (telegram_id, first_name) VALUES (?, ?)`, [telegramId, firstName], (insertErr) => {
+            db.run(`INSERT INTO users (telegram_id, first_name) VALUES (?, ?)`, [telegramId, firstName], async (insertErr) => {
                 if (insertErr) return console.error("DB Error (insert user):", insertErr.message);
+                await setCommandsForUser(bot, chatId, 'en', null); // Set default commands
                 bot.sendMessage(chatId, t('welcome', 'en', { name: firstName }), {
                     reply_markup: {
                         inline_keyboard: [
@@ -52,6 +84,7 @@ function handleStart(bot, msg, match) {
                 });
             });
         } else {
+            setCommandsForUser(bot, chatId, row.language, row.role);
             bot.sendMessage(chatId, t('welcomeBack', row.language, { name: firstName }));
         }
     });
@@ -62,9 +95,10 @@ async function handleLanguageChoice(bot, callbackQuery) {
     const telegramId = callbackQuery.from.id;
     const lang = callbackQuery.data.split('_').pop();
 
-    await dbRun(`UPDATE users SET language = ? WHERE telegram_id = ?`, [lang, telegramId]);
-
     const user = await dbGet(`SELECT role FROM users WHERE telegram_id = ?`, [telegramId]);
+    await dbRun(`UPDATE users SET language = ? WHERE telegram_id = ?`, [lang, telegramId]);
+    await setCommandsForUser(bot, msg.chat.id, lang, user.role);
+
     if (user && user.role) {
         bot.editMessageText(t('settingsLanguageConfirmation', lang, { lang: lang === 'fa' ? 'فارسی' : 'English' }), {
             chat_id: msg.chat.id,
@@ -88,28 +122,67 @@ async function handleLanguageChoice(bot, callbackQuery) {
 
 async function handleRoleChoice(bot, callbackQuery) {
     const msg = callbackQuery.message;
-    const user = await dbGet(`SELECT language FROM users WHERE telegram_id = ?`, [callbackQuery.from.id]);
+    const telegramId = callbackQuery.from.id;
+    const data = callbackQuery.data;
+
+    const user = await dbGet(`SELECT * FROM users WHERE telegram_id = ?`, [telegramId]);
     const lang = user.language;
-    const role = callbackQuery.data === 'set_role_primary' ? 'primary' : 'partner';
+    const isChanging = data.startsWith('set_new_role_');
+    const role = data.includes('primary') ? 'primary' : 'partner';
 
-    await dbRun(`UPDATE users SET role = ? WHERE telegram_id = ?`, [role, callbackQuery.from.id]);
-
-    if (role === 'primary') {
-        bot.editMessageText(t('calendarPrompt', lang), {
+    if (isChanging) {
+        const partner = await dbGet(`SELECT partner_id FROM users WHERE telegram_id = ?`, [telegramId]);
+        if (partner && partner.partner_id) {
+            const partnerUser = await dbGet(`SELECT language, first_name FROM users WHERE telegram_id = ?`, [partner.partner_id]);
+            const partnerLang = partnerUser ? partnerUser.language : 'en';
+            await dbRun(`UPDATE users SET partner_id = NULL WHERE telegram_id = ?`, [partner.partner_id]);
+            bot.sendMessage(partner.partner_id, t('partnerDisconnected', partnerLang, {name: user.first_name}));
+        }
+        
+        const cycles = await dbQuery(`SELECT id FROM cycles WHERE user_id = ?`, [telegramId]);
+        if (cycles.length > 0) {
+            const cycleIds = cycles.map(c => c.id);
+            await dbRun(`DELETE FROM symptoms WHERE cycle_id IN (${cycleIds.join(',')})`);
+            await dbRun(`DELETE FROM cycles WHERE user_id = ?`, [telegramId]);
+        }
+        
+        await dbRun(`UPDATE users SET role = ?, partner_id = NULL WHERE telegram_id = ?`, [role, telegramId]);
+        await setCommandsForUser(bot, msg.chat.id, lang, role);
+        
+        const friendlyRole = t(role === 'primary' ? 'rolePrimary' : 'rolePartner', lang);
+        bot.editMessageText(t('roleChanged', lang, { role: friendlyRole }), {
             chat_id: msg.chat.id,
             message_id: msg.message_id,
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: t('calendarGregorian', lang), callback_data: 'set_calendar_gregorian' }],
-                    [{ text: t('calendarShamsi', lang), callback_data: 'set_calendar_shamsi' }]
-                ]
-            }
+            parse_mode: 'Markdown'
         });
-    } else {
-        bot.editMessageText(t('partnerRoleInfo', lang), {
-            chat_id: msg.chat.id,
-            message_id: msg.message_id,
-        });
+
+    } else { // Initial setup
+        await dbRun(`UPDATE users SET role = ? WHERE telegram_id = ?`, [role, telegramId]);
+        await setCommandsForUser(bot, msg.chat.id, lang, role);
+
+        if (role === 'primary') {
+            bot.editMessageText(t('calendarPrompt', lang), {
+                chat_id: msg.chat.id,
+                message_id: msg.message_id,
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: t('calendarGregorian', lang), callback_data: 'set_calendar_gregorian' }],
+                        [{ text: t('calendarShamsi', lang), callback_data: 'set_calendar_shamsi' }]
+                    ]
+                }
+            });
+        } else {
+            bot.editMessageText(t('partnerRoleInfo', lang), {
+                chat_id: msg.chat.id,
+                message_id: msg.message_id,
+                parse_mode: 'Markdown'
+            });
+            const botInfo = await bot.getMe();
+            const link = `https://t.me/${botInfo.username}`;
+            bot.sendMessage(msg.chat.id, t('partnerForwardMessage', lang, {link: link}), {
+                parse_mode: 'Markdown'
+            });
+        }
     }
 }
 
@@ -170,8 +243,19 @@ async function handlePairing(bot, msg, pairingCode) {
     await dbRun(partnerSql, [partnerTelegramId, partnerFirstName, primaryUser.telegram_id, primaryUser.language, primaryUser.telegram_id, primaryUser.language]);
     await dbRun(`UPDATE users SET partner_id = ?, pairing_code = NULL WHERE telegram_id = ?`, [partnerTelegramId, primaryUser.telegram_id]);
     
+    await setCommandsForUser(bot, partnerChatId, primaryUser.language, 'partner');
+
     bot.sendMessage(primaryUser.telegram_id, t('partnerConnectedToYou', primaryUser.language, { name: partnerFirstName }), { parse_mode: 'Markdown' });
     bot.sendMessage(partnerChatId, t('partnerConnectedToThem', primaryUser.language, { name: primaryUser.first_name }), { parse_mode: 'Markdown' });
+}
+
+async function handleShareCommand(bot, msg) {
+    const user = await dbGet(`SELECT language FROM users WHERE telegram_id = ?`, [msg.from.id]);
+    const lang = user ? user.language : 'en';
+    
+    const botInfo = await bot.getMe();
+    const link = `https://t.me/${botInfo.username}`;
+    bot.sendMessage(msg.chat.id, t('shareMessage', lang, { link }), { parse_mode: 'Markdown' });
 }
 
 async function handleSettings(bot, msg) {
@@ -182,7 +266,8 @@ async function handleSettings(bot, msg) {
         reply_markup: {
             inline_keyboard: [
                 [{ text: t('settingsLanguage', lang), callback_data: 'settings_language' }],
-                [{ text: t('settingsCalendar', lang), callback_data: 'settings_calendar' }]
+                [{ text: t('settingsCalendar', lang), callback_data: 'settings_calendar' }],
+                [{ text: t('settingsRole', lang), callback_data: 'settings_role' }]
             ]
         }
     });
@@ -216,7 +301,47 @@ async function handleSettingsChoice(bot, callbackQuery) {
                 ]
             }
         });
+    } else if (choice === 'role') {
+        bot.editMessageText(t('changeRolePrompt', lang), {
+            chat_id: msg.chat.id,
+            message_id: msg.message_id,
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: t('changeRoleConfirm', lang), callback_data: 'confirm_role_change' }],
+                    [{ text: t('changeRoleCancel', lang), callback_data: 'cancel_role_change' }]
+                ]
+            }
+        });
     }
+}
+
+async function handleRoleChangeConfirmation(bot, callbackQuery) {
+    const msg = callbackQuery.message;
+    const user = await dbGet(`SELECT language FROM users WHERE telegram_id = ?`, [callbackQuery.from.id]);
+    const lang = user.language;
+
+    bot.editMessageText(t('rolePrompt', lang), {
+        chat_id: msg.chat.id,
+        message_id: msg.message_id,
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: t('rolePrimary', lang), callback_data: 'set_new_role_primary' }],
+                [{ text: t('rolePartner', lang), callback_data: 'set_new_role_partner' }]
+            ]
+        }
+    });
+}
+
+async function handleRoleChangeCancel(bot, callbackQuery) {
+    const msg = callbackQuery.message;
+    const user = await dbGet(`SELECT language FROM users WHERE telegram_id = ?`, [callbackQuery.from.id]);
+    const lang = user.language;
+    bot.editMessageText(t('roleChangeCancelled', lang), {
+        chat_id: msg.chat.id,
+        message_id: msg.message_id,
+        parse_mode: 'Markdown'
+    });
 }
 
 async function handleRemindersCommand(bot, msg) {
@@ -224,7 +349,7 @@ async function handleRemindersCommand(bot, msg) {
     const lang = user.language;
 
     if (!user || user.role !== 'primary') {
-        return bot.sendMessage(msg.chat.id, t('partnerOnlyCommand', lang)); // Re-using a similar string
+        return bot.sendMessage(msg.chat.id, t('partnerOnlyCommand', lang));
     }
 
     const status = user.reminder_time ? t('remindersStatusOn', lang, { time: user.reminder_time }) : t('remindersStatusOff', lang);
@@ -256,7 +381,7 @@ async function handleReminderChoice(bot, callbackQuery) {
         message_id: msg.message_id,
         parse_mode: 'Markdown'
     });
-    bot.answerCallbackQuery(callbackQuery.id, { text: "Settings saved!" });
+    bot.answerCallbackQuery(callbackQuery.id, { text: t('settingsSavedToast', lang) });
 }
 
 module.exports = {
@@ -267,8 +392,11 @@ module.exports = {
     handleCalendarChoice,
     handlePartnerCommand,
     handlePairing,
+    handleShareCommand,
     handleSettings,
     handleSettingsChoice,
     handleRemindersCommand,
     handleReminderChoice,
+    handleRoleChangeConfirmation,
+    handleRoleChangeCancel,
 };

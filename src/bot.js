@@ -21,19 +21,6 @@ async function startApp() {
 
         const bot = new TelegramBot(token, { polling: true });
 
-        const commands = [
-            { command: 'track', description: '🩸 Log your period' },
-            { command: 'symptoms', description: '🤒 Log symptoms' },
-            { command: 'history', description: '📈 View history & predictions' },
-            { command: 'status', description: "❤️ Check partner's status" },
-            { command: 'partner', description: '🤝 Invite or manage partner' },
-            { command: 'reminders', description: '🔔 Manage reminders' },
-            { command: 'settings', description: '⚙️ Change language/calendar' },
-            { command: 'help', description: '❓ Get help' },
-        ];
-        await bot.setMyCommands(commands);
-        console.log('[OK] Custom command menu set.');
-
         // --- Command Handlers ---
         bot.onText(/\/start(?: (.+))?/, (msg, match) => userHandler.handleStart(bot, msg, match));
         bot.onText(/\/help/, (msg) => userHandler.handleHelpCommand(bot, msg));
@@ -45,6 +32,8 @@ async function startApp() {
         bot.onText(/\/symptoms/, (msg) => cycleHandler.handleSymptomsCommand(bot, msg));
         bot.onText(/\/reminders/, (msg) => userHandler.handleRemindersCommand(bot, msg));
         bot.onText(/\/status/, (msg) => cycleHandler.handleStatusCommand(bot, msg));
+        bot.onText(/\/share/, (msg) => userHandler.handleShareCommand(bot, msg));
+
 
         // --- Callback Query Handler ---
         bot.on('callback_query', (callbackQuery) => {
@@ -53,6 +42,8 @@ async function startApp() {
             if (data.startsWith('set_language_')) {
                 userHandler.handleLanguageChoice(bot, callbackQuery);
             } else if (data.startsWith('set_role_')) {
+                userHandler.handleRoleChoice(bot, callbackQuery);
+            } else if (data.startsWith('set_new_role_')) {
                 userHandler.handleRoleChoice(bot, callbackQuery);
             } else if (data.startsWith('set_calendar_')) {
                 userHandler.handleCalendarChoice(bot, callbackQuery);
@@ -70,6 +61,10 @@ async function startApp() {
                 userHandler.handleReminderChoice(bot, callbackQuery);
             } else if (data.startsWith('settings_')) {
                 userHandler.handleSettingsChoice(bot, callbackQuery);
+            } else if (data === 'confirm_role_change') {
+                userHandler.handleRoleChangeConfirmation(bot, callbackQuery);
+            } else if (data === 'cancel_role_change') {
+                userHandler.handleRoleChangeCancel(bot, callbackQuery);
             }
         });
 
