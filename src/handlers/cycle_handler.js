@@ -16,7 +16,15 @@ async function notifyPartner(bot, userId, eventMessageKey, replacements = {}) {
     if (user && user.partner_id) {
         const partner = await dbGet(`SELECT language FROM users WHERE telegram_id = ?`, [user.partner_id]);
         const lang = partner ? partner.language : 'en';
-        bot.sendMessage(user.partner_id, `💌 A heads up from ${user.first_name}: ${eventMessageKey}`);
+
+        // If a symptomKey is passed, translate it for the partner
+        if (replacements.symptomKey) {
+            replacements.symptom = t(`symptoms.${replacements.symptomKey}`, lang);
+            delete replacements.symptomKey; // remove it so it's not passed to t() again
+        }
+
+        const message = t(eventMessageKey, lang, { name: user.first_name, ...replacements });
+        bot.sendMessage(user.partner_id, `💌 ${message}`);
     }
 }
 
@@ -118,7 +126,7 @@ async function handleSeeding(bot, msg) {
             [msg.from.id, currentStartDate.toISOString().split('T')[0], endDate.toISOString().split('T')[0]]);
         currentStartDate.setDate(currentStartDate.getDate() - cycle.cycle);
     }
-    bot.sendMessage(msg.chat.id, `🧪 I've added 3 sample cycles to your history. You can now use the /history command.`);
+    bot.sendMessage(msg.chat.id, t('seedSuccess', lang));
 }
 
 async function handleSymptomsCommand(bot, msg) {
@@ -134,12 +142,16 @@ async function handleSymptomsCommand(bot, msg) {
         return bot.sendMessage(msg.chat.id, t('symptomsNeedActive', lang));
     }
 
-    const symptoms = [
-        { name: 'Cramps', emoji: '😖' }, { name: 'Headache', emoji: '🤕' },
-        { name: 'Fatigue', emoji: '😴' }, { name: 'Nausea', emoji: '🤢' },
-        { name: 'Bloating', emoji: '🐡' }, { name: 'Mood Swings', emoji: '🎭' }
-    ];
-    const keyboard = symptoms.map(s => ([{ text: `${s.emoji} ${s.name}`, callback_data: `log_symptom_${s.name.toLowerCase().replace(' ', '_')}` }]));
+    const symptomKeys = ['cramps', 'headache', 'fatigue', 'nausea', 'bloating', 'mood_swings'];
+    const emojis = {
+        cramps: '😖', headache: '🤕', fatigue: '😴',
+        nausea: '🤢', bloating: '🐡', mood_swings: '🎭'
+    };
+    
+    const keyboard = symptomKeys.map(key => ([{ 
+        text: `${emojis[key]} ${t(`symptoms.${key}`, lang)}`, 
+        callback_data: `log_symptom_${key}` 
+    }]));
 
     bot.sendMessage(msg.chat.id, t('symptomsTitle', lang), {
         parse_mode: 'Markdown',
@@ -153,7 +165,7 @@ async function handleStatusCommand(bot, msg) {
     const partner = await dbGet(`SELECT role, partner_id, language FROM users WHERE telegram_id = ?`, [msg.from.id]);
     const lang = partner ? partner.language : 'en';
 
-    if (!partner || partner.role !== 'partner') {
+    if (!partner || partner.role !== 'partner' || !partner.partner_id) {
         return bot.sendMessage(msg.chat.id, t('partnerOnlyCommand', lang));
     }
 
@@ -179,7 +191,8 @@ async function handleStatusCommand(bot, msg) {
     const symptoms = await dbQuery(`SELECT symptom_name FROM symptoms WHERE cycle_id = ? AND logged_at = ?`, [activeCycle.id, todayStr]);
 
     if (symptoms.length > 0) {
-        statusMessage += t('statusSymptomsToday', lang, { symptoms: symptoms.map(s => s.symptom_name).join('\n- ') });
+        const translatedSymptoms = symptoms.map(s => t(`symptoms.${s.symptom_name}`, lang)).join('\n- ');
+        statusMessage += t('statusSymptomsToday', lang, { symptoms: translatedSymptoms });
     } else {
         statusMessage += t('statusNoSymptoms', lang);
     }
@@ -209,15 +222,17 @@ async function handleMethodChoice(bot, callbackQuery) {
 async function handleLogSelection(bot, callbackQuery) {
     const [,, type, method] = callbackQuery.data.split('_');
     const msg = callbackQuery.message;
+    const user = await dbGet(`SELECT language, calendar_preference FROM users WHERE telegram_id = ?`, [callbackQuery.from.id]);
+    const lang = user.language;
+
 
     if (method === 'today') {
         const today = new Date().toISOString().split('T')[0];
         if (type === 'start') await logPeriodStart(bot, callbackQuery, today);
         else await logPeriodEnd(bot, callbackQuery, today);
     } else {
-        const user = await dbGet(`SELECT calendar_preference FROM users WHERE telegram_id = ?`, [callbackQuery.from.id]);
         const keyboard = generateCalendar(type, user.calendar_preference, new Date());
-        bot.editMessageText("🗓️ Please select a date from the calendar:", {
+        bot.editMessageText(t('calendarSelectDate', lang), {
             chat_id: msg.chat.id,
             message_id: msg.message_id,
             reply_markup: keyboard
@@ -226,7 +241,6 @@ async function handleLogSelection(bot, callbackQuery) {
 }
 
 async function handleCalendarNav(bot, callbackQuery) {
-    // CORRECTED PARSING AND NAVIGATION LOGIC
     const parts = callbackQuery.data.split('_');
     const type = parts[2];
     const pref = parts[3];
@@ -234,15 +248,15 @@ async function handleCalendarNav(bot, callbackQuery) {
     const direction = parts[5];
 
     const msg = callbackQuery.message;
-    let currentMonthDate = new Date(dateStr);
+    const user = await dbGet(`SELECT language FROM users WHERE telegram_id = ?`, [callbackQuery.from.id]);
+    const lang = user.language;
 
-    // This simplified logic works for both calendar types.
-    // We step one Gregorian month and let generateCalendar figure out the correct Shamsi month.
+    let currentMonthDate = new Date(dateStr);
     const monthOffset = (direction === 'prev' ? -1 : 1);
     currentMonthDate.setMonth(currentMonthDate.getMonth() + monthOffset);
 
     const keyboard = generateCalendar(type, pref, currentMonthDate);
-    bot.editMessageText("🗓️ Please select a date from the calendar:", {
+    bot.editMessageText(t('calendarSelectDate', lang), {
         chat_id: msg.chat.id,
         message_id: msg.message_id,
         reply_markup: keyboard
@@ -258,7 +272,7 @@ async function handleDateSelection(bot, callbackQuery) {
 async function handleSymptomLogging(bot, callbackQuery) {
     const user = await dbGet(`SELECT language FROM users WHERE telegram_id = ?`, [callbackQuery.from.id]);
     const lang = user.language;
-    const symptomName = callbackQuery.data.split('log_symptom_')[1].replace('_', ' ');
+    const symptomKey = callbackQuery.data.split('log_symptom_')[1];
     const today = new Date().toISOString().split('T')[0];
 
     const activeCycle = await dbGet(`SELECT id FROM cycles WHERE user_id = ? AND end_date IS NULL`, [callbackQuery.from.id]);
@@ -266,17 +280,17 @@ async function handleSymptomLogging(bot, callbackQuery) {
         return bot.answerCallbackQuery(callbackQuery.id, { text: t('symptomsNeedActive', lang), show_alert: true });
     }
 
-    await dbRun(`INSERT INTO symptoms (cycle_id, symptom_name, logged_at) VALUES (?, ?, ?)`, [activeCycle.id, symptomName, today]);
+    await dbRun(`INSERT INTO symptoms (cycle_id, symptom_name, logged_at) VALUES (?, ?, ?)`, [activeCycle.id, symptomKey, today]);
     
-    const friendlyName = symptomName.charAt(0).toUpperCase() + symptomName.slice(1);
-    bot.answerCallbackQuery(callbackQuery.id, { text: `${friendlyName} logged!` });
-    bot.editMessageText(t('symptomLogged', lang, { symptom: friendlyName }), {
+    const translatedSymptom = t(`symptoms.${symptomKey}`, lang);
+    bot.answerCallbackQuery(callbackQuery.id, { text: t('symptomLoggedToast', lang, { symptom: translatedSymptom }) });
+    bot.editMessageText(t('symptomLogged', lang, { symptom: translatedSymptom }), {
         chat_id: callbackQuery.message.chat.id,
         message_id: callbackQuery.message.message_id,
         parse_mode: 'Markdown'
     });
 
-    notifyPartner(callbackQuery.from.id, `is experiencing: ${friendlyName}.`);
+    await notifyPartner(bot, callbackQuery.from.id, 'partnerNotificationSymptom', { symptomKey });
 }
 
 // --- Core Logic Functions ---
@@ -290,11 +304,11 @@ async function logPeriodStart(bot, callbackQuery, dateStr) {
 
     const activeCycle = await dbGet(`SELECT * FROM cycles WHERE user_id = ? AND end_date IS NULL`, [telegramId]);
     if (activeCycle) {
-        return bot.answerCallbackQuery(callbackQuery.id, { text: "You already have an active period.", show_alert: true });
+        return bot.answerCallbackQuery(callbackQuery.id, { text: t('logStartFailActive', lang), show_alert: true });
     }
     await dbRun(`INSERT INTO cycles (user_id, start_date) VALUES (?, ?)`, [telegramId, dateStr]);
     bot.editMessageText(t('logStartSuccess', lang, { date: displayDate }), { chat_id: msg.chat.id, message_id: msg.message_id, parse_mode: 'Markdown' });
-    notifyPartner(bot, telegramId, `her period started on ${displayDate}.`);
+    await notifyPartner(bot, telegramId, 'partnerNotificationPeriodStart', { date: displayDate });
 }
 
 async function logPeriodEnd(bot, callbackQuery, dateStr) {
@@ -307,11 +321,11 @@ async function logPeriodEnd(bot, callbackQuery, dateStr) {
 
     const activeCycle = await dbGet(`SELECT * FROM cycles WHERE user_id = ? AND end_date IS NULL ORDER BY start_date DESC LIMIT 1`, [telegramId]);
     if (!activeCycle) {
-        return bot.answerCallbackQuery(callbackQuery.id, { text: "No active period to end.", show_alert: true });
+        return bot.answerCallbackQuery(callbackQuery.id, { text: t('logEndFailNoActive', lang), show_alert: true });
     }
     await dbRun(`UPDATE cycles SET end_date = ? WHERE id = ?`, [dateStr, activeCycle.id]);
     bot.editMessageText(t('logEndSuccess', lang, { date: displayDate }), { chat_id: msg.chat.id, message_id: msg.message_id, parse_mode: 'Markdown' });
-    notifyPartner(bot, telegramId, `her period ended on ${displayDate}.`);
+    await notifyPartner(bot, telegramId, 'partnerNotificationPeriodEnd', { date: displayDate });
 }
 
 // --- Calendar Generation Utility ---
@@ -327,7 +341,7 @@ function generateCalendar(type, pref, date) {
     };
 
     if (pref === 'shamsi') {
-        const shamsiMonthNames = ["Farvardin", "Ordibehesht", "Khordad", "Tir", "Mordad", "Shahrivar", "Mehr", "Aban", "Azar", "Dey", "Bahman", "Esfand"];
+        const shamsiMonthNames = ["فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور", "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"];
         const [sYear, sMonth] = gregorianToJalali(date.getFullYear(), date.getMonth() + 1, date.getDate());
         
         let daysInShamsiMonth = 30;
@@ -338,8 +352,6 @@ function generateCalendar(type, pref, date) {
         }
 
         const firstDayGregorian = jalaliToGregorian(sYear, sMonth, 1);
-        // CORRECTED: The Shamsi week starts on Saturday. getDay() returns 0 for Sunday, 6 for Saturday.
-        // This calculation correctly shifts the week to start on Saturday (index 0).
         const firstDayOfWeek = (new Date(firstDayGregorian[0], firstDayGregorian[1] - 1, firstDayGregorian[2]).getDay() + 1) % 7;
 
         keyboard.push([{ text: `🌙 ${shamsiMonthNames[sMonth - 1]} ${sYear}`, callback_data: 'ignore' }]);
