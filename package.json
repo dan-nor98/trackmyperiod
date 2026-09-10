@@ -1,15 +1,18 @@
 {
   "name": "luna-bot",
-  "version": "1.0.0",
-  "description": "A Telegram bot for period and cycle tracking.",
-  "main": "src/bot.js",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Cycle tracking and consent-based partner support on Telegram Serverless",
+  "engines": { "node": ">=24" },
   "scripts": {
-    "start": "node src/bot.js"
+    "test": "node --import ./test/register.mjs --test test/*.test.js",
+    "check": "node scripts/check-modules.mjs",
+    "status": "tgcloud status",
+    "deploy": "tgcloud push",
+    "migrate": "tgcloud migrate",
+    "maintenance": "tgcloud run lib/maintenance",
+    "smoke": "tgcloud run lib/smoke"
   },
-  "dependencies": {
-    "dotenv": "^16.0.3",
-    "node-telegram-bot-api": "^0.66.0",
-    "shamsi-date-converter": "^1.0.5",
-    "sqlite3": "^5.1.6"
-  }
+  "devDependencies": { "@tgcloud/cli": "0.1.2" }
 }
