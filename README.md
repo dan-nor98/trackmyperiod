@@ -1,36 +1,61 @@
-# TrackMyPeriod Bot
+# Luna / TrackMyPeriod
 
-A sophisticated Telegram bot designed for easy and private menstrual cycle tracking, with a unique feature for sharing information with a partner to foster support and understanding.
+A Telegram-native Serverless bot for cycle tracking and optional partner support.
+Runs JavaScript modules and stores data on Telegram's infrastructure using its
+SDK and built-in SQLite database. No polling server or third-party bot host.
 
-## About
+**Status:** native migration implementation. Local regression tests are included;
+test-bot runtime validation and production setup are required before launch.
 
-TrackMyPeriod is more than just a period tracker; it's a tool for couples. It allows individuals to effortlessly log their menstrual cycles, track symptoms, and receive intelligent predictions. At the same time, it provides an option to securely connect with a partner, keeping them informed and empowering them to be more supportive.
+## Features
 
-Built with Node.js, this bot is designed to be intuitive, private, and accessible, featuring multi-language and multi-calendar support to cater to a global audience.
+- English/Farsi messages and Gregorian/Persian date pickers.
+- Period start/end, date validation, record correction/removal and undo.
+- Daily symptoms on any date, with three severity levels.
+- History and transparent estimates from recent start-to-start intervals.
+- Expiring single-use invitations and independent opt-in sharing scopes.
+- Immediate disconnect with history preservation and delivery-time consent checks.
+- IANA timezones, best-effort reminders, export and confirmed deletion.
+- Revision-guarded writes, update deduplication and a durable retry outbox.
 
-## Functionality
+## Commands
 
-The bot's features are tailored to two distinct roles: the primary user who is tracking their cycle, and their supportive partner.
+| Command | Action |
+|---|---|
+| /start, /help | Setup, role and command guide |
+| /track | Start/end today or select a date |
+| /history | Recent records, IDs and estimate |
+| /edit ID START END | Correct a record; use `-` for an ongoing period |
+| /remove ID, /undo | Confirm removal or reverse the latest tracking change |
+| /symptoms | Symptom menu |
+| /symptom NAME SEVERITY DATE | Record a symptom; severity 1–3 |
+| /unsymptom NAME DATE | Remove one daily symptom |
+| /partner, /sharing | Create invitation and control each sharing category |
+| /disconnect, /status | Revoke connection or view currently permitted details |
+| /settings, /timezone Area/City | Language, calendar, role and timezone |
+| /reminders HH:MM, /reminders off | User-local reminder preference |
+| /export, /delete, /privacy | Download data, confirm deletion, understand storage |
 
-### For Primary Users (Cycle Tracking)
+Text dates use Gregorian YYYY-MM-DD. The picker follows the selected calendar.
+The old destructive /seed command has been removed.
 
-- **🩸 Period Tracking (`/track`):** Easily log the start and end dates of a period, either for the current day or by selecting a specific date from a calendar.
-- **🤒 Symptom Logging (`/symptoms`):** Log common symptoms like cramps, headaches, and fatigue during an active period.
-- **📈 History & Predictions (`/history`):** View a summary of your last five cycles, see your average period and cycle length, and get an AI-powered prediction for your next period.
-- **🤝 Partner Connection (`/partner`):** Generate a secure, one-time invitation link to share with your partner.
-- **🔔 Reminders (`/reminders`):** Set a preferred time to receive daily reminders about upcoming PMS and predicted period start dates.
-- **⚙️ Settings (`/settings`):** Customize your experience by choosing your preferred language (English/Farsi) and calendar system (Gregorian/Shamsi).
-- **🧪 Test Data (`/seed`):** Add sample cycle data to your profile to immediately test the history and prediction features.
+## Development
 
+```sh
+npm ci --ignore-scripts
+npm run check
+npm test
+```
 
-### For Partners (Supportive Role)
+Requires Node 24+. Runtime modules have no npm dependencies; @tgcloud/cli is only
+development/deployment tooling. Use [Telegram Serverless](https://core.telegram.org/bots/serverless)
+and a Serverless CLI token from BotFather, not the ordinary bot token.
 
-- **❤️ Status Check (`/status`):** Proactively check your partner's current cycle status, including which day of their cycle or period they are on and any symptoms they've logged for the day.
-- **💌 Automated Notifications:** Receive discreet, automated notifications when your partner's period starts or ends, when they log a significant symptom, and when their next period is approaching.
-- **❓ Help Menu (`/help`):** Access a simple help menu that shows you the commands available for your role.
+- [Architecture and guarantees](docs/architecture.md)
+- [Deployment, migration and rollback](docs/deployment.md)
+- [Runtime reference](docs/tgcloud-sdk.md)
 
-### Key Features
-
-- **🌐 Multi-Language Support:** The bot is fully bilingual, supporting both **English** and **Farsi** in all commands and messages.
-- **🌙 Multi-Calendar Support:** All dates are displayed according to the user's preference, with full support for both **Gregorian** and **Shamsi (Hijri)** calendars, including the interactive date picker.
-- **🤖 Persistent Menu:** A convenient menu button in the Telegram chat provides quick access to all relevant commands.
+Telegram's published runtime does not advertise a native scheduled handler. An
+optional GitHub Actions trigger invokes the Telegram-hosted maintenance module.
+Without it, direct replies work but idle reminders and cleanup do not run.
+Scheduling is best-effort; Telegram sends are at least once, not exactly once.
