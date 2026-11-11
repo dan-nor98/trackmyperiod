@@ -5,10 +5,12 @@ import { handleUpdate } from 'lib/app';
 import { Store,enqueue } from 'lib/store';
 import { scheduleReminder,drain } from 'lib/delivery';
 const run=(f,id,user,text)=>handleUpdate(update(id,user,text),{...f,now:NOW});
-async function primary(f,id=1) { await run(f,1,id,'/start'); await run(f,2,id,'role primary'); }
+async function primary(f,id=1) { await run(f,1,id,'/start'); await run(f,2,id,'role primary'); await run(f,900,id,'timezone UTC'); }
 async function pair(f,owner=1,partner=2,base=10) {
   await run(f,base,owner,'/partner'); const token=(await new Store(f.db).get(owner)).invitation;
-  await run(f,base+1,partner,`join ${token}`); return token;
+  await run(f,base+1,partner,`join ${token}`);
+  const approval=(await new Store(f.db).get(owner)).state.pendingJoin.token;
+  await run(f,base+2,owner,`confirm ${approval}`);return token;
 }
 test('private chat gate prevents group disclosure and foreign callbacks',async()=>{
   const f=fixture();
@@ -46,6 +48,8 @@ test('invitation is single-use, rejects self-pairing and expired tokens',async()
   assert.equal((await store.get(1)).partner_id,null);
   await run(f,6,1,'partner'); const next=(await store.get(1)).invitation;
   await Promise.all([run(f,7,2,`join ${next}`),run(f,8,3,`join ${next}`)]);
+  assert.equal((await store.get(1)).partner_id,null);
+  await run(f,9,1,`confirm ${(await store.get(1)).state.pendingJoin.token}`);
   assert.ok([2,3].includes((await store.get(1)).partner_id)); assert.equal((await store.get(1)).invitation,null);
 });
 test('new grants start private; disconnect cancels queued sharing and blocks former partner',async()=>{
