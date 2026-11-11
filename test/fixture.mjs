@@ -16,6 +16,7 @@ export function fixture() {
   };
   const sent=[];
   const api={async getMe(){return {username:'test_luna_bot'};},async sendMessage(p){sent.push(p);return {};},
+    async editMessageText(p){sent.push(p);return {};},
     async sendDocument(p){sent.push(p);return {};}};
   return {db,api,sent,sqlite};
 }

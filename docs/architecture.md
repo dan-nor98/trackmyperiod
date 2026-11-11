@@ -71,8 +71,10 @@ expanding beyond a pilot. Do not claim this is a high-volume analytics schema.
   silently fall back to Math.random or claim hashed-token storage.
 - Joining requires an explicit support-role action, an unexpired invitation, no
   existing connection, and at most five attempts per account per ten minutes.
-- Acceptance clears the invitation and creates a new grant identifier in the
-  same owner update. An SQL guard verifies the recipient's role and revision.
+- A join consumes the invitation and creates a ten-minute pending request, not
+  a grant. Both parties see Telegram identity labels. The owner must explicitly
+  approve the request before a new grant is created. Cancellation invalidates
+  approval. An SQL guard verifies the recipient's role and revision at approval.
 - Periods, symptoms, and predictions/reminders are independently disabled initially.
 - Incoming commands that touch another account persist their exact target and
   grant before execution. Recovery of an old disconnect cannot revoke a new grant.
@@ -107,6 +109,24 @@ No raw health data, API error descriptions, tokens, or Telegram identifiers are
 written to application logs. The maintenance result reports counts only.
 
 ## Dates and estimates
+
+Onboarding asks for language, role, calendar and an explicit timezone. Today-based
+logging is gated until the timezone is confirmed. Typed dates follow the selected
+calendar, accept Persian/Arabic digits, and support g: or j: calendar overrides.
+Displayed dates use year-month-day order so they can be copied back into commands.
+
+Period forms stage both dates before committing, allowing completed historical
+periods to be added before newer records. Forms and destructive confirmations
+expire after ten minutes; cancellation removes their tokens. Edits and deletions
+check the original record snapshot. History has five-record pages, record-level
+controls, and a separate symptom history. Symptom logging explicitly asks severity.
+
+Navigation callbacks remain usable even on old messages. Direct write callbacks
+require a fresh panel; token-bound forms retain independent expiry. Callback
+replies edit the existing panel, falling back to a new message if Telegram can no
+longer edit it. Sharing controls carry a permission version and render current
+permissions again at delivery. Historical symptom notices show the affected date
+and current entries for that date, subject to the normal consent checks.
 
 Dates are Gregorian ISO date-only strings internally. Intl formats Gregorian or
 Persian calendars and IANA user timezones. The date picker advances from actual
